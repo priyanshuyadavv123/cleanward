@@ -1,0 +1,152 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default Deny: Block all requests by default to enforce Zero-Trust architecture.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper: Check if the user is authenticated via Firebase Authentication.
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Helper: Check if user is an Administrator (bootstrapped admin or has admin role in users collection).
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'dps.priyanshu6@gmail.com' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    // Helper: Check if user is an Officer assigned to the specific ward of the report.
+    function isOfficerForWard(wardId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'officer' &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.wardId == wardId;
+    }
+
+    // Helper: Check if user is either an Officer for the specific ward or a global Administrator.
+    function isOfficerOrAdmin(wardId) {
+      return isAdmin() || isOfficerForWard(wardId);
+    }
+
+    // Helper: Validate allowed status transitions in the CleanWard lifecycle state machine.
+    function isValidStatusTransition(fromStatus, toStatus, incomingData) {
+      return (
+        (fromStatus == 'Submitted' && toStatus == 'Acknowledged') ||
+        (fromStatus == 'Acknowledged' && toStatus == 'In progress') ||
+        (fromStatus == 'In progress' && toStatus == 'Resolved' && incomingData.afterPhotoUrl is string && incomingData.afterPhotoUrl.size() > 0 && incomingData.resolvedAt != null) ||
+        (fromStatus == 'Resolved' && toStatus == 'Closed') ||
+        (fromStatus == 'Reopened' && toStatus == 'In progress')
+      );
+    }
+
+    // Helper: Validate initial creation payload of a report.
+    function isValidNewReport(data) {
+      return data.category in ['Garbage dump', 'Overflowing dustbin', 'Blocked drain', 'Dead animal', 'Other'] &&
+        data.description is string && data.description.size() <= 300 &&
+        data.lat is number && data.lat >= 6.0 && data.lat <= 38.0 &&
+        data.lng is number && data.lng >= 68.0 && data.lng <= 98.0 &&
+        data.status == 'Submitted' &&
+        data.reporterCount == 1 &&
+        data.reopenCount == 0 &&
+        data.wardId is string && data.wardId.size() > 0;
+    }
+
+    // Rule for config/sla: Public read so SLAs can be displayed/calculated; write restricted to Admins only.
+    match /config/sla {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Rule for wards/{wardId}: Public read so citizens and officers can view ward boundaries; write restricted to Admins.
+    match /wards/{wardId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Rule for users/{uid}: Users can read only their own profile; write only by Admins or self-registration on first sign-in.
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if isSignedIn() && (
+        isAdmin() ||
+        (request.auth.uid == uid && request.resource.data.email == request.auth.token.email)
+      );
+      allow update, delete: if isAdmin();
+    }
+
+    // Rule for reports/{reportId}: Full private reports containing exact coordinates and before/after photos.
+    // Read: Only assigned ward officers or admins. Never public.
+    // Create: Public creation allowed only if strictly conforming to initial report schema.
+    // Update: Allowed for officer state machine updates, citizen deduplication count increments, or citizen 7-day reopen.
+    match /reports/{reportId} {
+      allow read: if isSignedIn() && isOfficerOrAdmin(resource.data.wardId);
+
+      allow create: if isValidNewReport(request.resource.data);
+
+      allow update: if (
+        // Case 1: Officer or Admin advancing the case along allowed status transitions
+        (isOfficerOrAdmin(resource.data.wardId) && isValidStatusTransition(resource.data.status, request.resource.data.status, request.resource.data)) ||
+        // Case 2: Duplicate reporting confirmation incrementing reporterCount
+        (request.resource.data.reporterCount == resource.data.reporterCount + 1 &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reporterCount'])) ||
+        // Case 3: Citizen reopening a Resolved case within 7 days of resolvedAt
+        (resource.data.status == 'Resolved' &&
+         request.resource.data.status == 'Reopened' &&
+         request.resource.data.reopenCount == resource.data.reopenCount + 1 &&
+         resource.data.resolvedAt != null &&
+         request.time <= resource.data.resolvedAt + duration.value(7, 'd')) ||
+        // Case 4: Admin unrestricted update
+        isAdmin()
+      );
+
+      // Rule for reports/{reportId}/events/{eventId}: Audit log of status transitions.
+      match /events/{eventId} {
+        allow read: if isSignedIn() && isOfficerOrAdmin(get(/databases/$(database)/documents/reports/$(reportId)).data.wardId);
+        allow create: if true; // Created along with report creation, status updates, or reopens
+      }
+
+      // Rule for reports/{reportId}/reporters/{autoId}: Citizen deduplication confirmation log.
+      match /reporters/{autoId} {
+        allow read: if isSignedIn() && isOfficerOrAdmin(get(/databases/$(database)/documents/reports/$(reportId)).data.wardId);
+        allow create: if true;
+      }
+    }
+
+    // Rule for publicReports/{reportId}: Public sanitized mirror collection with 3-decimal rounded coordinates and no photos.
+    // Read: Public read allowed for tracking and scoreboard aggregation.
+    // Create: Anyone can create if conforming to sanitized schema and status 'Submitted'.
+    // Update: Citizens can reopen Resolved cases within 7 days, deduplication can increment count, or officers can sync status.
+    match /publicReports/{reportId} {
+      allow read: if true;
+
+      allow create: if (
+        request.resource.data.category in ['Garbage dump', 'Overflowing dustbin', 'Blocked drain', 'Dead animal', 'Other'] &&
+        request.resource.data.status == 'Submitted' &&
+        request.resource.data.reporterCount == 1 &&
+        request.resource.data.reopenCount == 0 &&
+        request.resource.data.approxLat is number && request.resource.data.approxLat >= 6.0 && request.resource.data.approxLat <= 38.0 &&
+        request.resource.data.approxLng is number && request.resource.data.approxLng >= 68.0 && request.resource.data.approxLng <= 98.0 &&
+        request.resource.data.wardId is string
+      );
+
+      allow update: if (
+        // Citizen reopening a Resolved report within 7 days
+        (resource.data.status == 'Resolved' &&
+         request.resource.data.status == 'Reopened' &&
+         request.resource.data.reopenCount == resource.data.reopenCount + 1 &&
+         resource.data.resolvedAt != null &&
+         request.time <= resource.data.resolvedAt + duration.value(7, 'd')) ||
+        // Deduplication count increment
+        (request.resource.data.reporterCount == resource.data.reporterCount + 1) ||
+        // Officer or admin updating status to reflect state machine
+        (isSignedIn() && isOfficerOrAdmin(resource.data.wardId)) ||
+        isAdmin()
+      );
+    }
+  }
+}

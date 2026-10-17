@@ -1,0 +1,6 @@
+{
+  "summary": "Comprehensive implementation plan for CleanWard, a mobile-first civic sanitation reporting web app and PWA for Indian towns. Covers public reporting with EXIF-stripped canvas processing and 30m Haversine deduplication, public tracking with 3-decimal geo-fuzzing and 7-day citizen verification/reopen, Google-authenticated officer dashboard with strict state machine and before/after photo inspection, public ward scoreboard with 30-day resolution medians, admin ward/SLA management, and zero-trust Firestore security rules.",
+  "updatedAt": "2026-10-17T21:00:00.048108596Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

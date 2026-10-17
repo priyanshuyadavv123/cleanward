@@ -1,0 +1,144 @@
+{
+  "entities": {
+    "SlaConfig": {
+      "title": "SLA Configuration",
+      "description": "Target resolution turnaround hours per category",
+      "type": "object",
+      "properties": {
+        "overflowingDustbinHours": { "type": "number", "description": "SLA hours for Overflowing dustbin" },
+        "garbageDumpHours": { "type": "number", "description": "SLA hours for Garbage dump" },
+        "blockedDrainHours": { "type": "number", "description": "SLA hours for Blocked drain" },
+        "deadAnimalHours": { "type": "number", "description": "SLA hours for Dead animal" },
+        "otherHours": { "type": "number", "description": "SLA hours for Other sanitation issues" }
+      },
+      "required": ["overflowingDustbinHours", "garbageDumpHours", "blockedDrainHours", "deadAnimalHours", "otherHours"]
+    },
+    "Ward": {
+      "title": "Municipal Ward",
+      "description": "A municipal ward with geographic bounding box",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100, "description": "Ward name" },
+        "bbox": {
+          "type": "object",
+          "description": "Geographical bounding box coordinates"
+        },
+        "isSample": { "type": "boolean", "description": "Indicates if ward is a preloaded sample" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "required": ["name", "bbox", "isSample"]
+    },
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Internal officer or admin profile linked by email",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 128, "description": "Officer or admin Google email" },
+        "role": { "type": "string", "enum": ["officer", "admin"], "description": "Access role" },
+        "wardId": { "type": "string", "maxLength": 128, "description": "Assigned municipal ward ID" },
+        "updatedAt": { "type": "string", "description": "Last role update timestamp" }
+      },
+      "required": ["email", "role"]
+    },
+    "Report": {
+      "title": "Sanitation Report",
+      "description": "Full private sanitation issue report with exact coordinates and photos",
+      "type": "object",
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": ["Garbage dump", "Overflowing dustbin", "Blocked drain", "Dead animal", "Other"],
+          "description": "Sanitation problem category"
+        },
+        "description": { "type": "string", "maxLength": 300, "description": "Citizen issue description" },
+        "lat": { "type": "number", "description": "Latitude within India (6.0 - 38.0)" },
+        "lng": { "type": "number", "description": "Longitude within India (68.0 - 98.0)" },
+        "wardId": { "type": "string", "maxLength": 128, "description": "Assigned ward ID" },
+        "status": {
+          "type": "string",
+          "enum": ["Submitted", "Acknowledged", "In progress", "Resolved", "Closed", "Reopened"],
+          "description": "Current lifecycle status"
+        },
+        "reporterCount": { "type": "number", "description": "Count of citizens reporting this case" },
+        "reopenCount": { "type": "number", "description": "Count of times reopened" },
+        "createdAt": { "type": "string", "description": "Creation server timestamp" },
+        "dueAt": { "type": "string", "description": "Target resolution due timestamp" },
+        "resolvedAt": { "type": "string", "description": "Timestamp when marked resolved" },
+        "beforePhotoUrl": { "type": "string", "description": "Storage URL or compressed base64 JPEG" },
+        "afterPhotoUrl": { "type": "string", "description": "Resolution photo URL" }
+      },
+      "required": ["category", "description", "lat", "lng", "wardId", "status", "reporterCount", "reopenCount", "createdAt", "dueAt"]
+    },
+    "ReportEvent": {
+      "title": "Report Timeline Event",
+      "description": "Audit record of status transition",
+      "type": "object",
+      "properties": {
+        "fromStatus": { "type": "string", "description": "Previous status" },
+        "toStatus": { "type": "string", "description": "New status" },
+        "note": { "type": "string", "maxLength": 300, "description": "Officer or citizen transition note" },
+        "actorRole": { "type": "string", "description": "Actor role performing the transition" },
+        "createdAt": { "type": "string", "description": "Transition timestamp" }
+      },
+      "required": ["fromStatus", "toStatus", "createdAt"]
+    },
+    "ReporterRecord": {
+      "title": "Duplicate Reporter Confirmation",
+      "description": "Timestamped record of a citizen confirming an existing issue",
+      "type": "object",
+      "properties": {
+        "createdAt": { "type": "string", "description": "Confirmation timestamp" }
+      },
+      "required": ["createdAt"]
+    },
+    "PublicReport": {
+      "title": "Public Sanitized Report",
+      "description": "Sanitized public copy with 3-decimal rounded coordinates and no private photos",
+      "type": "object",
+      "properties": {
+        "category": { "type": "string", "description": "Problem category" },
+        "status": { "type": "string", "description": "Lifecycle status" },
+        "wardId": { "type": "string", "maxLength": 128, "description": "Assigned ward ID" },
+        "dueAt": { "type": "string", "description": "SLA due timestamp" },
+        "resolvedAt": { "type": "string", "description": "Resolution timestamp" },
+        "reopenCount": { "type": "number", "description": "Number of times reopened" },
+        "reporterCount": { "type": "number", "description": "Number of confirming citizens" },
+        "approxLat": { "type": "number", "description": "Latitude rounded to 3 decimal places" },
+        "approxLng": { "type": "number", "description": "Longitude rounded to 3 decimal places" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" },
+        "timelineSummary": { "type": "array", "description": "List of major public status milestones" }
+      },
+      "required": ["category", "status", "wardId", "dueAt", "reopenCount", "reporterCount", "approxLat", "approxLng", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/config/sla": {
+      "schema": "SlaConfig",
+      "description": "Municipal category resolution SLA standards"
+    },
+    "/wards/{wardId}": {
+      "schema": "Ward",
+      "description": "Municipal wards with spatial bounding boxes"
+    },
+    "/users/{uid}": {
+      "schema": "UserProfile",
+      "description": "Private user profile with officer/admin role and ward assignment"
+    },
+    "/reports/{reportId}": {
+      "schema": "Report",
+      "description": "Private complaint records with exact coordinates and photos"
+    },
+    "/reports/{reportId}/events/{eventId}": {
+      "schema": "ReportEvent",
+      "description": "Audit trail of status transitions"
+    },
+    "/reports/{reportId}/reporters/{autoId}": {
+      "schema": "ReporterRecord",
+      "description": "Citizen confirmations via proximity deduplication"
+    },
+    "/publicReports/{reportId}": {
+      "schema": "PublicReport",
+      "description": "Sanitized public complaint documents for tracking and scoreboards"
+    }
+  }
+}
